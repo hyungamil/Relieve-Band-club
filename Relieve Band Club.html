@@ -1,0 +1,521 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot, 
+  updateDoc, 
+  addDoc, 
+  deleteDoc,
+  query,
+  where
+} from 'firebase/firestore';
+import { 
+  Calendar as CalendarIcon, 
+  Plus, 
+  CheckCircle2, 
+  XCircle, 
+  Music,
+  Activity,
+  Clock,
+  Settings,
+  User,
+  Users, // 에러 해결을 위해 추가됨
+  Shield,
+  Trash2,
+  AlertCircle,
+  ChevronRight,
+  ChevronLeft,
+  Send,
+  Lock,
+  LogIn,
+  Key,
+  MapPin,
+  ClipboardList
+} from 'lucide-react';
+
+// Firebase configuration
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'band-conquest-v5';
+
+const ADMIN_ACCESS_CODE = "1234"; 
+
+const App = () => {
+  const [user, setUser] = useState(null);
+  const [role, setRole] = useState(null); 
+  const [activeTab, setActiveTab] = useState('status'); 
+  const [loading, setLoading] = useState(true);
+  
+  // Login State
+  const [loginStep, setLoginStep] = useState('select'); 
+  const [inputCode, setInputCode] = useState('');
+  const [inputName, setInputName] = useState('');
+  const [error, setError] = useState('');
+
+  // Data State
+  const [members, setMembers] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [notices, setNotices] = useState([]);
+  const [attendance, setAttendance] = useState({});
+
+  // Form State
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newNotice, setNewNotice] = useState('');
+  const [selectedRoom, setSelectedRoom] = useState('6호관 연습실');
+  const [eventDate, setEventDate] = useState('');
+  const [absenceReason, setAbsenceReason] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState(null);
+
+  // Calendar State
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) { console.error("Auth error:", err); }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, async (currUser) => {
+      if (currUser) {
+        setUser(currUser);
+        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', currUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          setRole(userDoc.data().role);
+        }
+      } else { 
+        setUser(null);
+        setRole(null);
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user || !role) return;
+    
+    const unsubMembers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'members'), (s) => {
+      setMembers(s.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    const unsubEvents = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'events'), (s) => {
+      setEvents(s.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    const unsubNotices = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), (s) => {
+      setNotices(s.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    const unsubAttendance = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'attendance'), (s) => {
+      const data = {};
+      s.docs.forEach(d => { data[d.id] = d.data(); });
+      setAttendance(data);
+    });
+
+    return () => { unsubMembers(); unsubEvents(); unsubNotices(); unsubAttendance(); };
+  }, [user, role]);
+
+  const handleAdminLogin = async () => {
+    if (inputCode === ADMIN_ACCESS_CODE) {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', user.uid);
+      await setDoc(userDocRef, { uid: user.uid, role: 'admin', name: '운영진' });
+      setRole('admin');
+      setError('');
+    } else { setError('인증 코드가 일치하지 않습니다.'); }
+  };
+
+  const handleMemberLogin = async () => {
+    if (!inputName.trim()) { setError('이름을 입력해주세요.'); return; }
+    const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', user.uid);
+    await setDoc(userDocRef, { uid: user.uid, role: 'member', name: inputName });
+    setRole('member');
+    setError('');
+  };
+
+  const handleLogout = () => { setRole(null); setLoginStep('select'); };
+
+  const addEvent = async () => {
+    if (!eventDate || role !== 'admin') return;
+    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
+      date: eventDate,
+      room: selectedRoom,
+      status: 'upcoming',
+      createdAt: new Date().toISOString()
+    });
+    setEventDate('');
+  };
+
+  const submitAbsence = async () => {
+    if (!absenceReason || !selectedEventId) return;
+    const attId = `${selectedEventId}_${user.uid}`;
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', attId), {
+      eventId: selectedEventId,
+      userId: user.uid,
+      userName: members.find(m => m.uid === user.uid)?.name || inputName,
+      status: 'absent',
+      reason: absenceReason,
+      timestamp: new Date().toISOString()
+    });
+    setAbsenceReason('');
+    setSelectedEventId(null);
+  };
+
+  const renderCalendar = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const firstDay = new Date(year, month, 1).getDay();
+    const days = [];
+
+    for (let i = 0; i < firstDay; i++) {
+      days.push(<div key={`empty-${i}`} className="h-24 border border-slate-50 bg-slate-50/30"></div>);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const dayEvents = events.filter(ev => ev.date.startsWith(dateStr));
+
+      days.push(
+        <div key={d} className="h-24 border border-slate-50 bg-white p-2 flex flex-col gap-1 overflow-hidden hover:bg-slate-50 transition-colors">
+          <span className="text-[10px] font-bold text-slate-400">{d}</span>
+          {dayEvents.map(ev => (
+            <div key={ev.id} className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-1 rounded truncate shadow-sm">
+              {ev.room === '6호관 연습실' ? '🏢' : '🎸'} {ev.room}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return days;
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-screen bg-[#f8fafc]"><Activity className="animate-spin text-[#3b82f6]" size={40} /></div>;
+
+  if (!role) {
+    return (
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-3xl"></div>
+        <div className="w-full max-w-md z-10">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-3xl shadow-2xl mb-6 transform -rotate-6"><Music className="text-white" size={40} /></div>
+            <h1 className="text-3xl font-black italic text-white tracking-tighter mb-2 uppercase">Band Conquest</h1>
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">밴드부 통합 관리 대시보드</p>
+          </div>
+          <div className="bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-[40px] shadow-2xl">
+            {loginStep === 'select' && (
+              <div className="space-y-4">
+                <button onClick={() => setLoginStep('member_name')} className="w-full flex items-center justify-between p-6 bg-white/10 hover:bg-white/20 text-white rounded-[24px] border border-white/5 transition-all group">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-green-500/20 rounded-2xl flex items-center justify-center text-green-400"><User size={24} /></div>
+                    <p className="font-black text-lg">부원 입장</p>
+                  </div>
+                  <ChevronRight className="text-slate-500 group-hover:translate-x-1 transition-transform" />
+                </button>
+                <button onClick={() => setLoginStep('admin_code')} className="w-full flex items-center justify-between p-6 bg-blue-600 hover:bg-blue-500 text-white rounded-[24px] shadow-xl shadow-blue-900/20 transition-all group">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-white"><Shield size={24} /></div>
+                    <p className="font-black text-lg">운영진 입장</p>
+                  </div>
+                  <Lock className="text-blue-300" size={20} />
+                </button>
+              </div>
+            )}
+            {loginStep === 'admin_code' && (
+              <div className="space-y-6">
+                <button onClick={() => setLoginStep('select')} className="text-slate-400 text-xs font-bold uppercase hover:text-white transition flex items-center gap-2">← BACK</button>
+                <input type="password" placeholder="Passcode" value={inputCode} onChange={(e) => setInputCode(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()} className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white font-black tracking-widest outline-none transition focus:ring-2 focus:ring-blue-500" />
+                {error && <p className="text-red-400 text-[10px] font-bold uppercase">{error}</p>}
+                <button onClick={handleAdminLogin} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-black text-sm uppercase transition">인증 확인</button>
+              </div>
+            )}
+            {loginStep === 'member_name' && (
+              <div className="space-y-6">
+                 <button onClick={() => setLoginStep('select')} className="text-slate-400 text-xs font-bold uppercase hover:text-white transition flex items-center gap-2">← BACK</button>
+                <input type="text" placeholder="본인 성함" value={inputName} onChange={(e) => setInputName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleMemberLogin()} className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white font-black outline-none transition focus:ring-2 focus:ring-green-500" />
+                {error && <p className="text-red-400 text-[10px] font-bold uppercase">{error}</p>}
+                <button onClick={handleMemberLogin} className="w-full bg-green-600 hover:bg-green-500 text-white py-4 rounded-2xl font-black text-sm uppercase transition">입장하기</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#f1f5f9] font-sans text-[#1e293b] flex flex-col">
+      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-50">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">LIVE HUD</span>
+          </div>
+          <h1 className="text-xl font-black italic tracking-tighter text-[#1e293b]">BAND CONQUEST</h1>
+        </div>
+        <nav className="hidden md:flex items-center gap-8 h-full">
+          <NavLink label="현황" active={activeTab === 'status'} onClick={() => setActiveTab('status')} />
+          <NavLink label="관리" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />
+          <NavLink label="공지" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
+        </nav>
+        <div className="flex items-center gap-4">
+          <div className="px-3 py-1 bg-slate-100 rounded-full flex items-center gap-2">
+            <Shield size={12} className={role === 'admin' ? "text-indigo-600" : "text-slate-400"} />
+            <span className="text-[10px] font-extrabold uppercase">{role === 'admin' ? '운영진' : '부원'}</span>
+          </div>
+          <button onClick={handleLogout} className="p-2 text-slate-300 hover:text-red-500 transition"><LogIn size={20} className="rotate-180" /></button>
+        </div>
+      </header>
+
+      <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full">
+        {/* LEFT PANEL: INPUTS */}
+        <div className="lg:col-span-4 space-y-6">
+          <section className="bg-white rounded-[24px] shadow-sm border border-slate-100 p-8 h-fit">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="w-6 h-6 bg-[#3b82f6] rounded-full flex items-center justify-center"><Plus size={14} className="text-white" /></div>
+              <h2 className="font-black text-lg">기록 및 사유 제출</h2>
+            </div>
+
+            <div className="space-y-8">
+              {role === 'admin' && (
+                <>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">부원 추가</label>
+                    <div className="flex gap-2">
+                      <input type="text" placeholder="이름" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                      <button onClick={async () => {
+                        if (!newMemberName) return;
+                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), { name: newMemberName, joinedAt: new Date().toISOString() });
+                        setNewMemberName('');
+                      }} className="bg-[#3b82f6] text-white p-3 rounded-xl hover:bg-blue-600 transition"><Plus size={20} /></button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">합주 예약</label>
+                    <div className="space-y-3">
+                      <input type="datetime-local" value={eventDate} onChange={(e) => setEventDate(e.target.value)} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-none" />
+                      <div className="grid grid-cols-2 gap-2">
+                        {['6호관 연습실', '외부연습실'].map(room => (
+                          <button key={room} onClick={() => setSelectedRoom(room)} className={`py-3 rounded-xl text-xs font-bold border-2 transition-all ${selectedRoom === room ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-transparent bg-slate-50 text-slate-400'}`}>{room}</button>
+                        ))}
+                      </div>
+                      <button onClick={addEvent} className="w-full bg-[#1e293b] text-white py-4 rounded-xl font-black text-sm hover:bg-slate-800 transition">일정 확정</button>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* IMPROVED ABSENCE SELECTION */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">불참 사유 제출 (합주 선택)</label>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 scrollbar-thin">
+                  {events.length === 0 ? (
+                    <div className="text-center py-8 text-slate-300 text-xs font-bold uppercase tracking-widest border border-dashed rounded-2xl">No events found</div>
+                  ) : (
+                    events.sort((a,b) => new Date(a.date) - new Date(b.date)).map(ev => (
+                      <button 
+                        key={ev.id}
+                        onClick={() => setSelectedEventId(ev.id)}
+                        className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${
+                          selectedEventId === ev.id ? 'border-blue-500 bg-blue-50' : 'border-slate-50 bg-[#f8fafc] grayscale'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[10px] font-black text-blue-600 uppercase tracking-tighter">{new Date(ev.date).toLocaleString([], { month: 'long', day: 'numeric', weekday: 'short' })}</span>
+                          <span className="text-[9px] font-bold text-slate-400">{new Date(ev.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        <p className="font-black text-sm text-[#1e293b]">{ev.room}</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+                {selectedEventId && (
+                  <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-2">
+                    <textarea placeholder="불참 사유를 상세히 입력해 주세요 (ex. 수업 보강)" value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="w-full bg-[#f8fafc] border border-slate-100 rounded-xl p-4 text-xs h-24 resize-none focus:ring-1 focus:ring-blue-500 outline-none" />
+                    <button onClick={submitAbsence} className="w-full bg-blue-500 text-white py-3 rounded-xl font-bold text-xs shadow-lg shadow-blue-200">사유 제출</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* RIGHT PANEL: DISPLAY */}
+        <div className="lg:col-span-8 space-y-6 overflow-y-auto">
+          {activeTab === 'status' && (
+            <div className="space-y-6">
+              {/* CALENDAR */}
+              <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                  <h3 className="font-black text-slate-800 flex items-center gap-3">
+                    <CalendarIcon size={20} className="text-blue-500" /> {currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월 합주 일정
+                  </h3>
+                  <div className="flex gap-2">
+                    <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 hover:bg-slate-200 rounded-lg transition"><ChevronLeft size={18}/></button>
+                    <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 hover:bg-slate-200 rounded-lg transition"><ChevronRight size={18}/></button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-7 text-center border-b border-slate-50">
+                  {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
+                    <div key={d} className="py-3 text-[10px] font-black text-slate-300 uppercase tracking-widest">{d}</div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7">
+                  {renderCalendar()}
+                </div>
+              </div>
+
+              {/* PUBLIC MEMBER LIST */}
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-blue-500" size={24} /> Member Live Status</h2>
+                <span className="text-xs font-bold text-slate-400 tracking-tighter">{members.length} REGISTERED BUWON</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {members.sort((a,b) => a.name.localeCompare(b.name)).map(m => (
+                  <MemberCard 
+                    key={m.id} 
+                    member={m} 
+                    role={role} 
+                    onDelete={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', m.id))} 
+                    attendance={attendance}
+                    events={events}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'admin' && (
+             <div className="space-y-6">
+                <h2 className="text-xl font-black uppercase flex items-center gap-3"><Clock className="text-indigo-500" /> PRACTICE DETAILS</h2>
+                <div className="grid grid-cols-1 gap-4">
+                  {events.sort((a,b) => new Date(a.date) - new Date(b.date)).map(ev => (
+                    <EventDetailCard key={ev.id} event={ev} attendance={attendance} members={members} role={role} onDelete={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', ev.id))} />
+                  ))}
+                </div>
+             </div>
+          )}
+
+          {activeTab === 'logs' && (
+            <div className="bg-white rounded-[32px] p-8 border border-slate-100 min-h-[500px] flex flex-col">
+              <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><ClipboardList className="text-blue-500" /> Notices</h2>
+              <div className="flex-1 space-y-4 mb-6">
+                {notices.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).map(n => (
+                  <div key={n.id} className="p-4 bg-slate-50 rounded-2xl border-l-4 border-blue-500">
+                    <p className="text-sm font-medium text-slate-700 leading-relaxed">{n.content}</p>
+                    <p className="text-[10px] font-black text-slate-400 mt-2 uppercase">Posted • {new Date(n.timestamp).toLocaleString()}</p>
+                  </div>
+                ))}
+              </div>
+              {role === 'admin' && (
+                <div className="flex gap-2">
+                  <input type="text" placeholder="공지 사항을 입력하세요..." value={newNotice} onChange={(e) => setNewNotice(e.target.value)} className="flex-1 bg-slate-100 border-none rounded-2xl px-6 py-4 text-sm focus:ring-2 focus:ring-blue-400 outline-none" />
+                  <button onClick={async () => {
+                    if (!newNotice) return;
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), { content: newNotice, timestamp: new Date().toISOString() });
+                    setNewNotice('');
+                  }} className="bg-blue-500 text-white p-4 rounded-2xl shadow-lg hover:scale-105 transition"><Send size={20} /></button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <footer className="h-10 bg-[#0f172a] text-white flex items-center justify-between px-6 text-[10px] font-bold uppercase tracking-widest">
+        <div className="flex gap-6">
+          <div className="flex items-center gap-2"><span className="text-green-400">●</span> STATUS: <span className="text-green-400">SYNCED</span></div>
+          <div>PROJ: BAND CONQUEST</div>
+        </div>
+        <div className="flex items-center gap-2">ACTIVE BUWON: <span className="text-blue-400">{members.length} / 16</span></div>
+      </footer>
+    </div>
+  );
+};
+
+const NavLink = ({ label, active, onClick }) => (
+  <button onClick={onClick} className={`text-sm font-black uppercase tracking-widest transition-all border-b-4 h-full px-4 flex items-center ${active ? 'border-[#3b82f6] text-[#1e293b]' : 'border-transparent text-slate-300 hover:text-slate-400'}`}>{label}</button>
+);
+
+const MemberCard = ({ member, role, onDelete, attendance }) => {
+  // Find all absences for this member
+  const memberAbsences = Object.values(attendance).filter(a => a.userId === member.userId || a.userName === member.name);
+  const latestAbsence = memberAbsences[memberAbsences.length - 1];
+
+  return (
+    <div className="bg-white p-8 rounded-[32px] border border-slate-100 group transition-all hover:shadow-xl relative overflow-hidden">
+      <div className="flex justify-between items-start mb-6">
+        <div>
+          <h3 className="text-2xl font-black text-[#1e293b]">{member.name}</h3>
+          <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-1">Instrument: Session</p>
+        </div>
+        {role === 'admin' && (
+          <button onClick={onDelete} className="p-2 text-slate-200 hover:text-red-500 transition"><Trash2 size={18} /></button>
+        )}
+      </div>
+      <div className="space-y-4">
+        {latestAbsence ? (
+          <div className="p-4 bg-red-50 rounded-2xl border border-red-100 animate-in fade-in zoom-in-95">
+            <p className="text-[10px] font-black text-red-400 uppercase mb-1 flex items-center gap-1"><AlertCircle size={10}/> Status: Absent</p>
+            <p className="text-xs font-bold text-red-700 italic leading-snug">"{latestAbsence.reason}"</p>
+          </div>
+        ) : (
+          <div className="p-4 bg-green-50 rounded-2xl border border-green-100">
+            <p className="text-[10px] font-black text-green-500 uppercase flex items-center gap-1"><CheckCircle2 size={10}/> Status: Active</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const EventDetailCard = ({ event, attendance, members, role, onDelete }) => {
+  const eventDate = new Date(event.date);
+  const absentees = Object.values(attendance).filter(a => a.eventId === event.id);
+
+  return (
+    <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row gap-6 items-center hover:bg-slate-50 transition-colors">
+      <div className="flex flex-col items-center justify-center bg-blue-600 p-5 rounded-2xl min-w-[100px] shadow-lg shadow-blue-200 text-white">
+        <span className="text-[10px] font-black uppercase opacity-70">{eventDate.toLocaleString('default', { month: 'short' })}</span>
+        <span className="text-3xl font-black leading-none my-1">{eventDate.getDate()}</span>
+        <span className="text-[10px] font-black uppercase opacity-70">{eventDate.toLocaleString('default', { weekday: 'short' })}</span>
+      </div>
+      <div className="flex-1 text-center md:text-left">
+        <div className="flex items-center gap-2 mb-1 justify-center md:justify-start">
+           <MapPin size={14} className="text-blue-500" />
+           <h4 className="font-black text-lg text-slate-800 uppercase tracking-tight">{event.room}</h4>
+        </div>
+        <p className="text-sm font-bold text-slate-400">{eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+      </div>
+      <div className="flex flex-col items-center md:items-end">
+        <span className="text-[10px] font-black text-red-500 uppercase mb-1 tracking-widest">Absentees ({absentees.length})</span>
+        <div className="flex flex-wrap gap-1 justify-center md:justify-end">
+          {absentees.length === 0 ? <span className="text-[10px] text-slate-300 font-bold uppercase">All Present</span> : absentees.map((a, i) => (
+             <span key={i} className="px-2 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-black">{a.userName}</span>
+          ))}
+        </div>
+      </div>
+      {role === 'admin' && (
+        <button onClick={onDelete} className="p-3 text-slate-200 hover:text-red-500 rounded-xl transition"><Trash2 size={20}/></button>
+      )}
+    </div>
+  );
+};
+
+export default App;
