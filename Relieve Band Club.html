@@ -1,521 +1,644 @@
-import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  signInWithCustomToken, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  onSnapshot, 
-  updateDoc, 
-  addDoc, 
-  deleteDoc,
-  query,
-  where
-} from 'firebase/firestore';
-import { 
-  Calendar as CalendarIcon, 
-  Plus, 
-  CheckCircle2, 
-  XCircle, 
-  Music,
-  Activity,
-  Clock,
-  Settings,
-  User,
-  Users, // 에러 해결을 위해 추가됨
-  Shield,
-  Trash2,
-  AlertCircle,
-  ChevronRight,
-  ChevronLeft,
-  Send,
-  Lock,
-  LogIn,
-  Key,
-  MapPin,
-  ClipboardList
-} from 'lucide-react';
-
-// Firebase configuration
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'band-conquest-v5';
-
-const ADMIN_ACCESS_CODE = "1234"; 
-
-const App = () => {
-  const [user, setUser] = useState(null);
-  const [role, setRole] = useState(null); 
-  const [activeTab, setActiveTab] = useState('status'); 
-  const [loading, setLoading] = useState(true);
-  
-  // Login State
-  const [loginStep, setLoginStep] = useState('select'); 
-  const [inputCode, setInputCode] = useState('');
-  const [inputName, setInputName] = useState('');
-  const [error, setError] = useState('');
-
-  // Data State
-  const [members, setMembers] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [notices, setNotices] = useState([]);
-  const [attendance, setAttendance] = useState({});
-
-  // Form State
-  const [newMemberName, setNewMemberName] = useState('');
-  const [newNotice, setNewNotice] = useState('');
-  const [selectedRoom, setSelectedRoom] = useState('6호관 연습실');
-  const [eventDate, setEventDate] = useState('');
-  const [absenceReason, setAbsenceReason] = useState('');
-  const [selectedEventId, setSelectedEventId] = useState(null);
-
-  // Calendar State
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>밴드부 통합 관리 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
+        
+        :root {
+            --brand-color: #0f172a; 
+            --practice-color: #334155;
+            --meeting-color: #64748b;
+            --performance-color: #4f46e5;
+            --absence-color: #e11d48;
+            --etc-color: #0d9488;
         }
-      } catch (err) { console.error("Auth error:", err); }
-    };
-    initAuth();
 
-    const unsubscribe = onAuthStateChanged(auth, async (currUser) => {
-      if (currUser) {
-        setUser(currUser);
-        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', currUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          setRole(userDoc.data().role);
+        body { 
+            font-family: 'Pretendard', sans-serif; 
+            background-color: #f8fafc;
+            color: #1e293b;
+            letter-spacing: -0.025em;
+            -webkit-tap-highlight-color: transparent;
         }
-      } else { 
-        setUser(null);
-        setRole(null);
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
 
-  useEffect(() => {
-    if (!user || !role) return;
-    
-    const unsubMembers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'members'), (s) => {
-      setMembers(s.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubEvents = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'events'), (s) => {
-      setEvents(s.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubNotices = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), (s) => {
-      setNotices(s.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubAttendance = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'attendance'), (s) => {
-      const data = {};
-      s.docs.forEach(d => { data[d.id] = d.data(); });
-      setAttendance(data);
-    });
+        .tab-content { display: none; opacity: 0; transition: opacity 0.3s ease; }
+        .tab-content.active { display: block; opacity: 1; }
 
-    return () => { unsubMembers(); unsubEvents(); unsubNotices(); unsubAttendance(); };
-  }, [user, role]);
+        .type-btn {
+            border: 2px solid #f1f5f9;
+            background-color: #fff;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            color: #94a3b8;
+        }
+        .type-btn:hover:not(:disabled) { border-color: #e2e8f0; color: #64748b; }
+        .type-btn.active {
+            border-color: var(--brand-color) !important;
+            color: var(--brand-color);
+            background-color: #fff;
+            font-weight: 800;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+            transform: translateY(-2px);
+        }
+        .type-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            background-color: #f8fafc;
+        }
 
-  const handleAdminLogin = async () => {
-    if (inputCode === ADMIN_ACCESS_CODE) {
-      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', user.uid);
-      await setDoc(userDocRef, { uid: user.uid, role: 'admin', name: '운영진' });
-      setRole('admin');
-      setError('');
-    } else { setError('인증 코드가 일치하지 않습니다.'); }
-  };
+        .fc { 
+            --fc-border-color: #f1f5f9; 
+            --fc-button-bg-color: #0f172a; 
+            --fc-button-border-color: #0f172a; 
+            min-height: 500px;
+        }
+        
+        .fc-list-event-time, .fc-event-time { display: none !important; }
 
-  const handleMemberLogin = async () => {
-    if (!inputName.trim()) { setError('이름을 입력해주세요.'); return; }
-    const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'userRoles', user.uid);
-    await setDoc(userDocRef, { uid: user.uid, role: 'member', name: inputName });
-    setRole('member');
-    setError('');
-  };
+        .fc .fc-toolbar {
+            flex-direction: column;
+            gap: 1rem;
+        }
+        @media (min-width: 768px) {
+            .fc .fc-toolbar { flex-direction: row; }
+        }
+        .fc .fc-toolbar-title { font-size: 1rem !important; font-weight: 800; color: #0f172a; }
+        .fc .fc-button { border-radius: 0.75rem !important; font-size: 0.75rem !important; font-weight: 700; padding: 0.4rem 0.8rem !important; }
+        
+        .fc-theme-standard td, .fc-theme-standard th { border: 1px solid #f8fafc !important; }
+        .fc-col-header-cell-cushion { font-size: 0.65rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; }
+        .fc-daygrid-day-number { font-size: 0.7rem; font-weight: 600; color: #cbd5e1; padding: 8px !important; }
+        
+        .fc-event { 
+            border: none !important; 
+            padding: 4px 8px !important; 
+            border-radius: 6px !important; 
+            font-size: 0.65rem !important; 
+            font-weight: 700 !important; 
+            margin: 1px 0 !important;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
 
-  const handleLogout = () => { setRole(null); setLoginStep('select'); };
+        .admin-only { display: none; }
+        [data-role="admin"] .admin-only { display: block; }
 
-  const addEvent = async () => {
-    if (!eventDate || role !== 'admin') return;
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
-      date: eventDate,
-      room: selectedRoom,
-      status: 'upcoming',
-      createdAt: new Date().toISOString()
-    });
-    setEventDate('');
-  };
+        .nav-btn.active {
+            color: #0f172a;
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        }
 
-  const submitAbsence = async () => {
-    if (!absenceReason || !selectedEventId) return;
-    const attId = `${selectedEventId}_${user.uid}`;
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', attId), {
-      eventId: selectedEventId,
-      userId: user.uid,
-      userName: members.find(m => m.uid === user.uid)?.name || inputName,
-      status: 'absent',
-      reason: absenceReason,
-      timestamp: new Date().toISOString()
-    });
-    setAbsenceReason('');
-    setSelectedEventId(null);
-  };
+        input, select, textarea, button { font-size: 16px !important; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col overflow-x-hidden">
 
-  const renderCalendar = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const firstDay = new Date(year, month, 1).getDay();
-    const days = [];
-
-    for (let i = 0; i < firstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="h-24 border border-slate-50 bg-slate-50/30"></div>);
-    }
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const dayEvents = events.filter(ev => ev.date.startsWith(dateStr));
-
-      days.push(
-        <div key={d} className="h-24 border border-slate-50 bg-white p-2 flex flex-col gap-1 overflow-hidden hover:bg-slate-50 transition-colors">
-          <span className="text-[10px] font-bold text-slate-400">{d}</span>
-          {dayEvents.map(ev => (
-            <div key={ev.id} className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-1 rounded truncate shadow-sm">
-              {ev.room === '6호관 연습실' ? '🏢' : '🎸'} {ev.room}
+    <!-- 로그인 화면 -->
+    <div id="auth-overlay" class="fixed inset-0 bg-[#f8fafc] z-[100] flex items-center justify-center p-6">
+        <div class="w-full max-w-sm space-y-10 animate-in fade-in zoom-in duration-500 text-center">
+            <div class="space-y-4">
+                <div class="inline-flex items-center justify-center w-16 h-16 bg-white rounded-[1.5rem] shadow-sm border border-slate-100 mb-2">
+                    <span class="text-3xl">🎸</span>
+                </div>
+                <h1 class="text-2xl font-extrabold tracking-tight text-slate-900 leading-tight">밴드부 통합 관리</h1>
+                <p class="text-slate-400 font-semibold text-sm">인증 후 시스템에 접속합니다</p>
             </div>
-          ))}
-        </div>
-      );
-    }
-    return days;
-  };
-
-  if (loading) return <div className="flex items-center justify-center h-screen bg-[#f8fafc]"><Activity className="animate-spin text-[#3b82f6]" size={40} /></div>;
-
-  if (!role) {
-    return (
-      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-3xl"></div>
-        <div className="w-full max-w-md z-10">
-          <div className="text-center mb-10">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-3xl shadow-2xl mb-6 transform -rotate-6"><Music className="text-white" size={40} /></div>
-            <h1 className="text-3xl font-black italic text-white tracking-tighter mb-2 uppercase">Band Conquest</h1>
-            <p className="text-slate-400 font-bold text-xs uppercase tracking-[0.2em]">밴드부 통합 관리 대시보드</p>
-          </div>
-          <div className="bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-[40px] shadow-2xl">
-            {loginStep === 'select' && (
-              <div className="space-y-4">
-                <button onClick={() => setLoginStep('member_name')} className="w-full flex items-center justify-between p-6 bg-white/10 hover:bg-white/20 text-white rounded-[24px] border border-white/5 transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-green-500/20 rounded-2xl flex items-center justify-center text-green-400"><User size={24} /></div>
-                    <p className="font-black text-lg">부원 입장</p>
-                  </div>
-                  <ChevronRight className="text-slate-500 group-hover:translate-x-1 transition-transform" />
-                </button>
-                <button onClick={() => setLoginStep('admin_code')} className="w-full flex items-center justify-between p-6 bg-blue-600 hover:bg-blue-500 text-white rounded-[24px] shadow-xl shadow-blue-900/20 transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-white"><Shield size={24} /></div>
-                    <p className="font-black text-lg">운영진 입장</p>
-                  </div>
-                  <Lock className="text-blue-300" size={20} />
-                </button>
-              </div>
-            )}
-            {loginStep === 'admin_code' && (
-              <div className="space-y-6">
-                <button onClick={() => setLoginStep('select')} className="text-slate-400 text-xs font-bold uppercase hover:text-white transition flex items-center gap-2">← BACK</button>
-                <input type="password" placeholder="Passcode" value={inputCode} onChange={(e) => setInputCode(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()} className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white font-black tracking-widest outline-none transition focus:ring-2 focus:ring-blue-500" />
-                {error && <p className="text-red-400 text-[10px] font-bold uppercase">{error}</p>}
-                <button onClick={handleAdminLogin} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-black text-sm uppercase transition">인증 확인</button>
-              </div>
-            )}
-            {loginStep === 'member_name' && (
-              <div className="space-y-6">
-                 <button onClick={() => setLoginStep('select')} className="text-slate-400 text-xs font-bold uppercase hover:text-white transition flex items-center gap-2">← BACK</button>
-                <input type="text" placeholder="본인 성함" value={inputName} onChange={(e) => setInputName(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleMemberLogin()} className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-white font-black outline-none transition focus:ring-2 focus:ring-green-500" />
-                {error && <p className="text-red-400 text-[10px] font-bold uppercase">{error}</p>}
-                <button onClick={handleMemberLogin} className="w-full bg-green-600 hover:bg-green-500 text-white py-4 rounded-2xl font-black text-sm uppercase transition">입장하기</button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-[#f1f5f9] font-sans text-[#1e293b] flex flex-col">
-      <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-50">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">LIVE HUD</span>
-          </div>
-          <h1 className="text-xl font-black italic tracking-tighter text-[#1e293b]">BAND CONQUEST</h1>
-        </div>
-        <nav className="hidden md:flex items-center gap-8 h-full">
-          <NavLink label="현황" active={activeTab === 'status'} onClick={() => setActiveTab('status')} />
-          <NavLink label="관리" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />
-          <NavLink label="공지" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
-        </nav>
-        <div className="flex items-center gap-4">
-          <div className="px-3 py-1 bg-slate-100 rounded-full flex items-center gap-2">
-            <Shield size={12} className={role === 'admin' ? "text-indigo-600" : "text-slate-400"} />
-            <span className="text-[10px] font-extrabold uppercase">{role === 'admin' ? '운영진' : '부원'}</span>
-          </div>
-          <button onClick={handleLogout} className="p-2 text-slate-300 hover:text-red-500 transition"><LogIn size={20} className="rotate-180" /></button>
-        </div>
-      </header>
-
-      <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full">
-        {/* LEFT PANEL: INPUTS */}
-        <div className="lg:col-span-4 space-y-6">
-          <section className="bg-white rounded-[24px] shadow-sm border border-slate-100 p-8 h-fit">
-            <div className="flex items-center gap-3 mb-8">
-              <div className="w-6 h-6 bg-[#3b82f6] rounded-full flex items-center justify-center"><Plus size={14} className="text-white" /></div>
-              <h2 className="font-black text-lg">기록 및 사유 제출</h2>
-            </div>
-
-            <div className="space-y-8">
-              {role === 'admin' && (
-                <>
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">부원 추가</label>
-                    <div className="flex gap-2">
-                      <input type="text" placeholder="이름" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                      <button onClick={async () => {
-                        if (!newMemberName) return;
-                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), { name: newMemberName, joinedAt: new Date().toISOString() });
-                        setNewMemberName('');
-                      }} className="bg-[#3b82f6] text-white p-3 rounded-xl hover:bg-blue-600 transition"><Plus size={20} /></button>
+            
+            <div class="space-y-6">
+                <div class="space-y-4 text-left">
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1 block">이름</label>
+                        <input type="text" id="user-name" placeholder="이름을 입력하세요" class="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold outline-none focus:border-slate-900 transition-all shadow-sm">
                     </div>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">합주 예약</label>
-                    <div className="space-y-3">
-                      <input type="datetime-local" value={eventDate} onChange={(e) => setEventDate(e.target.value)} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-none" />
-                      <div className="grid grid-cols-2 gap-2">
-                        {['6호관 연습실', '외부연습실'].map(room => (
-                          <button key={room} onClick={() => setSelectedRoom(room)} className={`py-3 rounded-xl text-xs font-bold border-2 transition-all ${selectedRoom === room ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-transparent bg-slate-50 text-slate-400'}`}>{room}</button>
-                        ))}
-                      </div>
-                      <button onClick={addEvent} className="w-full bg-[#1e293b] text-white py-4 rounded-xl font-black text-sm hover:bg-slate-800 transition">일정 확정</button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* IMPROVED ABSENCE SELECTION */}
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 uppercase mb-3 block tracking-wider">불참 사유 제출 (합주 선택)</label>
-                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 scrollbar-thin">
-                  {events.length === 0 ? (
-                    <div className="text-center py-8 text-slate-300 text-xs font-bold uppercase tracking-widest border border-dashed rounded-2xl">No events found</div>
-                  ) : (
-                    events.sort((a,b) => new Date(a.date) - new Date(b.date)).map(ev => (
-                      <button 
-                        key={ev.id}
-                        onClick={() => setSelectedEventId(ev.id)}
-                        className={`w-full text-left p-4 rounded-2xl border-2 transition-all ${
-                          selectedEventId === ev.id ? 'border-blue-500 bg-blue-50' : 'border-slate-50 bg-[#f8fafc] grayscale'
-                        }`}
-                      >
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-[10px] font-black text-blue-600 uppercase tracking-tighter">{new Date(ev.date).toLocaleString([], { month: 'long', day: 'numeric', weekday: 'short' })}</span>
-                          <span className="text-[9px] font-bold text-slate-400">{new Date(ev.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    
+                    <div>
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1 block">직책</label>
+                        <div class="grid grid-cols-4 gap-1.5 p-1.5 bg-slate-100 rounded-2xl">
+                            <button onclick="setLoginRole('member', this)" class="role-btn active py-2.5 rounded-xl text-[9px] font-bold transition nav-btn">부원</button>
+                            <button onclick="setLoginRole('treasurer', this)" class="role-btn py-2.5 rounded-xl text-[9px] font-bold transition text-slate-400">총무</button>
+                            <button onclick="setLoginRole('vice-president', this)" class="role-btn py-2.5 rounded-xl text-[9px] font-bold transition text-slate-400">부회장</button>
+                            <button onclick="setLoginRole('president', this)" class="role-btn py-2.5 rounded-xl text-[9px] font-bold transition text-slate-400">회장</button>
                         </div>
-                        <p className="font-black text-sm text-[#1e293b]">{ev.room}</p>
-                      </button>
-                    ))
-                  )}
+                    </div>
+
+                    <div id="session-select-container">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 ml-1 block">세션 선택</label>
+                        <select id="user-session-select" class="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold outline-none focus:border-slate-900 transition-all shadow-sm appearance-none">
+                            <option value="드럼">드럼 (Drum)</option>
+                            <option value="베이스">베이스 (Bass)</option>
+                            <option value="일렉">일렉 (Electric Guitar)</option>
+                            <option value="키보드">키보드 (Keyboard)</option>
+                            <option value="세컨베이스">세컨베이스 (Second Bass)</option>
+                            <option value="세컨일렉">세컨일렉 (Second Electric)</option>
+                            <option value="세컨키보드">세컨키보드 (Second Keyboard)</option>
+                        </select>
+                    </div>
+                    
+                    <div id="admin-code-container" class="hidden">
+                        <label class="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-1 ml-1 block">관리자 인증 코드</label>
+                        <input type="password" id="admin-code" placeholder="코드를 입력하세요" class="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold outline-none focus:border-slate-900 transition-all shadow-sm">
+                    </div>
+                    <input type="hidden" id="user-role-select" value="member">
                 </div>
-                {selectedEventId && (
-                  <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-2">
-                    <textarea placeholder="불참 사유를 상세히 입력해 주세요 (ex. 수업 보강)" value={absenceReason} onChange={(e) => setAbsenceReason(e.target.value)} className="w-full bg-[#f8fafc] border border-slate-100 rounded-xl p-4 text-xs h-24 resize-none focus:ring-1 focus:ring-blue-500 outline-none" />
-                    <button onClick={submitAbsence} className="w-full bg-blue-500 text-white py-3 rounded-xl font-bold text-xs shadow-lg shadow-blue-200">사유 제출</button>
-                  </div>
-                )}
-              </div>
+                <button onclick="handleLogin()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-md shadow-lg hover:bg-black transition-all active:scale-[0.98]">접속하기</button>
             </div>
-          </section>
         </div>
+    </div>
 
-        {/* RIGHT PANEL: DISPLAY */}
-        <div className="lg:col-span-8 space-y-6 overflow-y-auto">
-          {activeTab === 'status' && (
-            <div className="space-y-6">
-              {/* CALENDAR */}
-              <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
-                <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-                  <h3 className="font-black text-slate-800 flex items-center gap-3">
-                    <CalendarIcon size={20} className="text-blue-500" /> {currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월 합주 일정
-                  </h3>
-                  <div className="flex gap-2">
-                    <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 hover:bg-slate-200 rounded-lg transition"><ChevronLeft size={18}/></button>
-                    <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 hover:bg-slate-200 rounded-lg transition"><ChevronRight size={18}/></button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-7 text-center border-b border-slate-50">
-                  {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
-                    <div key={d} className="py-3 text-[10px] font-black text-slate-300 uppercase tracking-widest">{d}</div>
-                  ))}
-                </div>
-                <div className="grid grid-cols-7">
-                  {renderCalendar()}
-                </div>
-              </div>
+    <!-- 대시보드 메인 -->
+    <div id="main-app" class="hidden flex flex-col min-h-screen" data-role="member">
+        <header class="bg-white/90 backdrop-blur-md border-b border-slate-100 sticky top-0 z-40">
+            <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+                <nav class="flex items-center space-x-1 bg-slate-100/50 p-1 rounded-xl">
+                    <button onclick="switchTab('home')" id="nav-home" class="nav-btn active px-4 sm:px-6 py-1.5 rounded-lg text-xs font-bold transition">홈</button>
+                    <button onclick="switchTab('members')" id="nav-members" class="nav-btn px-4 sm:px-6 py-1.5 rounded-lg text-xs font-bold transition text-slate-400">부원 목록</button>
+                </nav>
 
-              {/* PUBLIC MEMBER LIST */}
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-black uppercase flex items-center gap-3"><Users className="text-blue-500" size={24} /> Member Live Status</h2>
-                <span className="text-xs font-bold text-slate-400 tracking-tighter">{members.length} REGISTERED BUWON</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {members.sort((a,b) => a.name.localeCompare(b.name)).map(m => (
-                  <MemberCard 
-                    key={m.id} 
-                    member={m} 
-                    role={role} 
-                    onDelete={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', m.id))} 
-                    attendance={attendance}
-                    events={events}
-                  />
-                ))}
-              </div>
+                <div class="flex items-center space-x-3 sm:space-x-4">
+                    <div class="text-right hidden sm:block">
+                        <p id="display-user-name" class="text-xs font-extrabold text-slate-900 leading-none">사용자</p>
+                        <p id="display-user-session" class="text-[9px] font-bold text-indigo-500 uppercase mt-1 tracking-tighter">세션</p>
+                    </div>
+                    <button onclick="logout()" class="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-500 transition-all">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    </button>
+                </div>
             </div>
-          )}
+        </header>
 
-          {activeTab === 'admin' && (
-             <div className="space-y-6">
-                <h2 className="text-xl font-black uppercase flex items-center gap-3"><Clock className="text-indigo-500" /> PRACTICE DETAILS</h2>
-                <div className="grid grid-cols-1 gap-4">
-                  {events.sort((a,b) => new Date(a.date) - new Date(b.date)).map(ev => (
-                    <EventDetailCard key={ev.id} event={ev} attendance={attendance} members={members} role={role} onDelete={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'events', ev.id))} />
-                  ))}
-                </div>
-             </div>
-          )}
+        <main class="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 overflow-x-hidden">
+            
+            <div id="tab-home" class="tab-content active space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    <div class="lg:col-span-4 space-y-6">
+                        <div class="bg-white rounded-[1.5rem] sm:rounded-[2rem] p-6 sm:p-7 border border-slate-100 shadow-sm">
+                            <div class="flex items-center justify-between mb-5">
+                                <h3 class="text-sm font-extrabold flex items-center">📢 공지사항</h3>
+                                <button onclick="openNoticeModal()" class="admin-only text-slate-300 hover:text-slate-900 transition">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                </button>
+                            </div>
+                            <div id="notice-list" class="space-y-3"></div>
+                        </div>
 
-          {activeTab === 'logs' && (
-            <div className="bg-white rounded-[32px] p-8 border border-slate-100 min-h-[500px] flex flex-col">
-              <h2 className="text-xl font-black mb-8 flex items-center gap-3 uppercase tracking-tighter"><ClipboardList className="text-blue-500" /> Notices</h2>
-              <div className="flex-1 space-y-4 mb-6">
-                {notices.sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp)).map(n => (
-                  <div key={n.id} className="p-4 bg-slate-50 rounded-2xl border-l-4 border-blue-500">
-                    <p className="text-sm font-medium text-slate-700 leading-relaxed">{n.content}</p>
-                    <p className="text-[10px] font-black text-slate-400 mt-2 uppercase">Posted • {new Date(n.timestamp).toLocaleString()}</p>
-                  </div>
-                ))}
-              </div>
-              {role === 'admin' && (
-                <div className="flex gap-2">
-                  <input type="text" placeholder="공지 사항을 입력하세요..." value={newNotice} onChange={(e) => setNewNotice(e.target.value)} className="flex-1 bg-slate-100 border-none rounded-2xl px-6 py-4 text-sm focus:ring-2 focus:ring-blue-400 outline-none" />
-                  <button onClick={async () => {
-                    if (!newNotice) return;
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), { content: newNotice, timestamp: new Date().toISOString() });
-                    setNewNotice('');
-                  }} className="bg-blue-500 text-white p-4 rounded-2xl shadow-lg hover:scale-105 transition"><Send size={20} /></button>
+                        <div class="bg-white rounded-[1.5rem] sm:rounded-[2rem] p-6 sm:p-7 border border-slate-100 shadow-sm">
+                            <h3 class="text-sm font-extrabold mb-6 flex items-center">📅 일정 등록</h3>
+                            <div class="space-y-5">
+                                <div id="schedule-type-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    <button id="type-practice" onclick="selectType('practice', this)" class="type-btn active py-3 rounded-xl text-[10px] font-bold">합주 연습</button>
+                                    <button id="type-meeting" onclick="selectType('meeting', this)" class="type-btn py-3 rounded-xl text-[10px] font-bold">정기 회의</button>
+                                    <button id="type-performance" onclick="selectType('performance', this)" class="type-btn py-3 rounded-xl text-[10px] font-bold">공연 일정</button>
+                                    <button id="type-etc" onclick="selectType('etc', this)" class="type-btn py-3 rounded-xl text-[10px] font-bold">기타 일정</button>
+                                    <button id="type-absence" onclick="selectType('absence', this)" class="type-btn py-3 rounded-xl text-[10px] font-bold col-span-2 sm:col-span-1">미참석 알림</button>
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-black text-slate-300 uppercase mb-2 block tracking-widest px-1">날짜 선택</label>
+                                    <input type="date" id="schedule-date" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 text-xs outline-none focus:ring-2 focus:ring-slate-100">
+                                </div>
+                                <div>
+                                    <label class="text-[9px] font-black text-slate-300 uppercase mb-2 block tracking-widest px-1">내용 및 사유</label>
+                                    <textarea id="schedule-title" rows="3" placeholder="내용 혹은 사유를 반드시 입력하세요" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-slate-700 text-xs resize-none outline-none focus:ring-2 focus:ring-slate-100 shadow-inner"></textarea>
+                                    <p id="validation-error" class="hidden text-[10px] text-red-500 font-bold mt-1 ml-1 animate-pulse">사유를 반드시 입력해야 저장할 수 있습니다.</p>
+                                </div>
+                                <button onclick="saveSchedule()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs shadow-md hover:bg-black transition-all active:scale-[0.98]">일정 저장하기</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lg:col-span-8">
+                        <div class="bg-white rounded-[1.5rem] sm:rounded-[2rem] p-4 sm:p-8 border border-slate-100 shadow-sm h-full flex flex-col min-h-[600px]">
+                            <div id="calendar" class="flex-1"></div>
+                        </div>
+                    </div>
                 </div>
-              )}
             </div>
-          )}
-        </div>
-      </main>
 
-      <footer className="h-10 bg-[#0f172a] text-white flex items-center justify-between px-6 text-[10px] font-bold uppercase tracking-widest">
-        <div className="flex gap-6">
-          <div className="flex items-center gap-2"><span className="text-green-400">●</span> STATUS: <span className="text-green-400">SYNCED</span></div>
-          <div>PROJ: BAND CONQUEST</div>
-        </div>
-        <div className="flex items-center gap-2">ACTIVE BUWON: <span className="text-blue-400">{members.length} / 16</span></div>
-      </footer>
+            <div id="tab-members" class="tab-content space-y-6">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 sm:p-8 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-100 shadow-sm gap-4">
+                    <div class="space-y-1">
+                        <h2 class="text-xl font-extrabold text-slate-900">부원 목록</h2>
+                        <p class="text-[10px] text-slate-400 font-bold tracking-tight">오늘 합주 참여 가능 여부를 실시간으로 공유합니다.</p>
+                    </div>
+                    
+                    <div class="flex items-center space-x-3 w-full sm:w-auto">
+                        <div class="flex items-center bg-slate-100 p-1 rounded-2xl shadow-inner flex-1 sm:flex-none">
+                            <button id="btn-status-coming" onclick="updateTodayStatus('coming')" class="flex-1 sm:px-5 py-2 rounded-xl text-[10px] font-bold transition-all">참석</button>
+                            <button id="btn-status-absent" onclick="updateTodayStatus('absent')" class="flex-1 sm:px-5 py-2 rounded-xl text-[10px] font-bold transition-all">불참</button>
+                        </div>
+                        <button onclick="openMemberModal()" class="admin-only bg-slate-900 text-white px-4 py-2.5 rounded-xl text-[10px] font-bold hover:bg-black transition-all shadow-sm">+ 추가</button>
+                    </div>
+                </div>
+                <div id="member-grid-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5"></div>
+            </div>
+        </main>
     </div>
-  );
-};
 
-const NavLink = ({ label, active, onClick }) => (
-  <button onClick={onClick} className={`text-sm font-black uppercase tracking-widest transition-all border-b-4 h-full px-4 flex items-center ${active ? 'border-[#3b82f6] text-[#1e293b]' : 'border-transparent text-slate-300 hover:text-slate-400'}`}>{label}</button>
-);
-
-const MemberCard = ({ member, role, onDelete, attendance }) => {
-  // Find all absences for this member
-  const memberAbsences = Object.values(attendance).filter(a => a.userId === member.userId || a.userName === member.name);
-  const latestAbsence = memberAbsences[memberAbsences.length - 1];
-
-  return (
-    <div className="bg-white p-8 rounded-[32px] border border-slate-100 group transition-all hover:shadow-xl relative overflow-hidden">
-      <div className="flex justify-between items-start mb-6">
-        <div>
-          <h3 className="text-2xl font-black text-[#1e293b]">{member.name}</h3>
-          <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest mt-1">Instrument: Session</p>
+    <!-- 모달 레이어 -->
+    <div id="event-detail-modal" class="fixed inset-0 bg-slate-900/10 hidden z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-[2rem] w-full max-w-sm p-8 shadow-2xl border border-slate-100 animate-in zoom-in duration-300">
+            <div id="event-detail-badge" class="inline-block px-3 py-1.5 rounded-xl text-[9px] font-black uppercase mb-5">카테고리</div>
+            <h3 id="event-detail-title" class="text-xl font-bold mb-4 text-slate-900 leading-tight">일정 내용</h3>
+            <div class="space-y-4 py-5 border-t border-slate-50">
+                <div class="flex justify-between text-[11px] font-bold text-slate-400"><span>작성자</span><span id="event-detail-user" class="text-slate-900"></span></div>
+                <div class="flex justify-between text-[11px] font-bold text-slate-400"><span>날짜</span><span id="event-detail-date" class="text-slate-900"></span></div>
+                <div class="p-5 bg-slate-50 rounded-2xl text-slate-600 text-[11px] font-semibold leading-relaxed mt-2 overflow-y-auto max-h-[200px] shadow-inner" id="event-detail-desc"></div>
+            </div>
+            <div class="flex space-x-3 mt-8">
+                <button onclick="closeModals()" class="flex-1 bg-slate-100 py-4 rounded-2xl font-bold text-slate-500 text-xs transition active:scale-[0.98]">닫기</button>
+                <button id="btn-delete-event" class="hidden flex-1 bg-rose-50 text-rose-500 py-4 rounded-2xl font-bold text-xs transition active:scale-[0.98] hover:bg-rose-100">일정 삭제하기</button>
+            </div>
         </div>
-        {role === 'admin' && (
-          <button onClick={onDelete} className="p-2 text-slate-200 hover:text-red-500 transition"><Trash2 size={18} /></button>
-        )}
-      </div>
-      <div className="space-y-4">
-        {latestAbsence ? (
-          <div className="p-4 bg-red-50 rounded-2xl border border-red-100 animate-in fade-in zoom-in-95">
-            <p className="text-[10px] font-black text-red-400 uppercase mb-1 flex items-center gap-1"><AlertCircle size={10}/> Status: Absent</p>
-            <p className="text-xs font-bold text-red-700 italic leading-snug">"{latestAbsence.reason}"</p>
-          </div>
-        ) : (
-          <div className="p-4 bg-green-50 rounded-2xl border border-green-100">
-            <p className="text-[10px] font-black text-green-500 uppercase flex items-center gap-1"><CheckCircle2 size={10}/> Status: Active</p>
-          </div>
-        )}
-      </div>
     </div>
-  );
-};
 
-const EventDetailCard = ({ event, attendance, members, role, onDelete }) => {
-  const eventDate = new Date(event.date);
-  const absentees = Object.values(attendance).filter(a => a.eventId === event.id);
-
-  return (
-    <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row gap-6 items-center hover:bg-slate-50 transition-colors">
-      <div className="flex flex-col items-center justify-center bg-blue-600 p-5 rounded-2xl min-w-[100px] shadow-lg shadow-blue-200 text-white">
-        <span className="text-[10px] font-black uppercase opacity-70">{eventDate.toLocaleString('default', { month: 'short' })}</span>
-        <span className="text-3xl font-black leading-none my-1">{eventDate.getDate()}</span>
-        <span className="text-[10px] font-black uppercase opacity-70">{eventDate.toLocaleString('default', { weekday: 'short' })}</span>
-      </div>
-      <div className="flex-1 text-center md:text-left">
-        <div className="flex items-center gap-2 mb-1 justify-center md:justify-start">
-           <MapPin size={14} className="text-blue-500" />
-           <h4 className="font-black text-lg text-slate-800 uppercase tracking-tight">{event.room}</h4>
+    <div id="notice-modal" class="fixed inset-0 bg-slate-900/10 hidden z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-[2.5rem] w-full max-w-sm p-9 shadow-2xl">
+            <h3 class="text-lg font-extrabold mb-6 text-slate-900">📢 공지 등록</h3>
+            <div class="space-y-4">
+                <input type="text" id="notice-title" placeholder="제목" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-xs outline-none focus:ring-2 focus:ring-slate-200">
+                <textarea id="notice-content" rows="5" placeholder="공지 내용을 입력하세요" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-xs resize-none outline-none focus:ring-2 focus:ring-slate-200"></textarea>
+                <button onclick="saveNotice()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs shadow-md">게시하기</button>
+                <button onclick="closeModals()" class="w-full text-slate-300 py-2 text-[10px] mt-2">닫기</button>
+            </div>
         </div>
-        <p className="text-sm font-bold text-slate-400">{eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-      </div>
-      <div className="flex flex-col items-center md:items-end">
-        <span className="text-[10px] font-black text-red-500 uppercase mb-1 tracking-widest">Absentees ({absentees.length})</span>
-        <div className="flex flex-wrap gap-1 justify-center md:justify-end">
-          {absentees.length === 0 ? <span className="text-[10px] text-slate-300 font-bold uppercase">All Present</span> : absentees.map((a, i) => (
-             <span key={i} className="px-2 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-black">{a.userName}</span>
-          ))}
-        </div>
-      </div>
-      {role === 'admin' && (
-        <button onClick={onDelete} className="p-3 text-slate-200 hover:text-red-500 rounded-xl transition"><Trash2 size={20}/></button>
-      )}
     </div>
-  );
-};
 
-export default App;
+    <div id="member-modal" class="fixed inset-0 bg-slate-900/10 hidden z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-[2.5rem] w-full max-w-sm p-9 shadow-2xl">
+            <h3 class="text-lg font-extrabold mb-6 text-slate-900">👤 부원 정보 추가</h3>
+            <div class="space-y-4">
+                <input type="text" id="new-member-name" placeholder="이름" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-xs outline-none">
+                <select id="new-member-role" class="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold text-xs outline-none">
+                    <option value="member">부원</option>
+                    <option value="treasurer">총무</option>
+                    <option value="vice-president">부회장</option>
+                    <option value="president">회장</option>
+                </select>
+                <button onclick="addMember()" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs">등록 완료</button>
+                <button onclick="closeModals()" class="w-full text-slate-300 py-2 text-[10px] mt-2">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, deleteDoc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'band-live-dashboard-v11';
+        const ADMIN_CODE = "1234";
+
+        let currentUser = null;
+        let calendar = null;
+        let members = [];
+        let schedules = [];
+        let notices = [];
+        let selectedType = 'practice';
+
+        window.onload = async () => {
+            const initAuth = async () => {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            };
+            await initAuth();
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    const saved = localStorage.getItem('band_v11_session');
+                    if (saved) setAppState(JSON.parse(saved));
+                }
+            });
+            initCalendar();
+            document.getElementById('schedule-date').value = new Date().toISOString().split('T')[0];
+        };
+
+        window.setLoginRole = (role, el) => {
+            document.querySelectorAll('.role-btn').forEach(b => {
+                b.classList.remove('active', 'text-slate-900', 'bg-white', 'shadow-sm');
+                b.classList.add('text-slate-400');
+            });
+            el.classList.add('active', 'text-slate-900', 'bg-white', 'shadow-sm');
+            el.classList.remove('text-slate-400');
+            document.getElementById('user-role-select').value = role;
+            document.getElementById('admin-code-container').style.display = (role !== 'member') ? 'block' : 'none';
+        };
+
+        window.handleLogin = () => {
+            const name = document.getElementById('user-name').value.trim();
+            const role = document.getElementById('user-role-select').value;
+            const session = document.getElementById('user-session-select').value;
+            const code = document.getElementById('admin-code').value;
+
+            if (!name) return showToast("이름을 입력하세요.");
+            if (role !== 'member' && code !== ADMIN_CODE) return showToast("인증 코드가 올바르지 않습니다.");
+            
+            const data = { name, role, session };
+            localStorage.setItem('band_v11_session', JSON.stringify(data));
+            setAppState(data);
+        };
+
+        const setAppState = (data) => {
+            currentUser = { ...data, uid: auth.currentUser.uid };
+            document.getElementById('auth-overlay').style.display = 'none';
+            document.getElementById('main-app').classList.remove('hidden');
+            
+            const isAdmin = (data.role !== 'member');
+            document.getElementById('main-app').setAttribute('data-role', isAdmin ? 'admin' : 'member');
+            document.getElementById('display-user-name').innerText = data.name;
+            document.getElementById('display-user-session').innerText = data.session || '세션 미정';
+            
+            if (data.role === 'member') {
+                selectedType = 'absence';
+                ['practice', 'meeting', 'performance', 'etc'].forEach(t => {
+                    const btn = document.getElementById(`type-${t}`);
+                    if(btn) btn.disabled = true;
+                });
+                const absBtn = document.getElementById('type-absence');
+                document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+                if(absBtn) absBtn.classList.add('active');
+            }
+
+            startDataSync();
+        };
+
+        const translateRole = (role) => {
+            const roles = { president: '회장', 'vice-president': '부회장', treasurer: '총무', member: '부원' };
+            return roles[role] || '부원';
+        };
+
+        window.logout = () => {
+            localStorage.removeItem('band_v11_session');
+            location.reload();
+        };
+
+        window.switchTab = (tab) => {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(b => {
+                b.classList.remove('active');
+                b.classList.add('text-slate-400');
+            });
+            document.getElementById(`tab-${tab}`).classList.add('active');
+            document.getElementById(`nav-${tab}`).classList.add('active');
+            document.getElementById(`nav-${tab}`).classList.remove('text-slate-400');
+            if (tab === 'home' && calendar) calendar.updateSize();
+        };
+
+        const startDataSync = () => {
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'members'), (snap) => {
+                members = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                renderMembers();
+                updateMyStatusUI();
+                
+                // 로그인한 유저 정보를 멤버 목록에 업데이트/동기화 (세션 정보 포함)
+                syncCurrentUserInfo();
+            });
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'schedules'), (snap) => {
+                schedules = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateCalendar();
+            });
+            onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), (snap) => {
+                notices = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                renderNotices();
+            });
+        };
+
+        const syncCurrentUserInfo = async () => {
+            if (!currentUser) return;
+            const existing = members.find(m => m.name === currentUser.name);
+            if (existing) {
+                if (existing.session !== currentUser.session || existing.role !== currentUser.role) {
+                    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', existing.id), {
+                        session: currentUser.session,
+                        role: currentUser.role
+                    });
+                }
+            } else {
+                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), {
+                    name: currentUser.name,
+                    role: currentUser.role,
+                    session: currentUser.session,
+                    lastUpdate: '',
+                    todayStatus: 'none'
+                });
+            }
+        };
+
+        window.selectType = (type, el) => {
+            if (currentUser.role === 'member' && type !== 'absence') return;
+            selectedType = type;
+            document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+            el.classList.add('active');
+        };
+
+        window.updateTodayStatus = async (status) => {
+            const today = new Date().toISOString().split('T')[0];
+            const me = members.find(m => m.name === currentUser.name);
+            if (me) {
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', me.id), { 
+                    todayStatus: status, 
+                    lastUpdate: today,
+                    session: currentUser.session // 세션 정보 다시 한번 보장
+                });
+            }
+        };
+
+        const updateMyStatusUI = () => {
+            const today = new Date().toISOString().split('T')[0];
+            const me = members.find(m => m.name === currentUser.name);
+            const status = (me && me.lastUpdate === today) ? me.todayStatus : null;
+            const btnComing = document.getElementById('btn-status-coming');
+            const btnAbsent = document.getElementById('btn-status-absent');
+            if(btnComing) btnComing.className = `flex-1 sm:px-5 py-2 rounded-xl text-[10px] font-bold transition-all ${status === 'coming' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-400 hover:bg-white'}`;
+            if(btnAbsent) btnAbsent.className = `flex-1 sm:px-5 py-2 rounded-xl text-[10px] font-bold transition-all ${status === 'absent' ? 'bg-rose-500 text-white shadow-md' : 'text-slate-400 hover:bg-white'}`;
+        };
+
+        const renderMembers = () => {
+            const container = document.getElementById('member-grid-container');
+            if(!container) return;
+            container.innerHTML = '';
+            const today = new Date().toISOString().split('T')[0];
+            const roleOrder = { president: 0, 'vice-president': 1, treasurer: 2, member: 3 };
+            
+            [...members].sort((a,b) => roleOrder[a.role] - roleOrder[b.role]).forEach(m => {
+                const isUpdated = m.lastUpdate === today;
+                const status = isUpdated ? m.todayStatus : 'none';
+                const sBg = status === 'coming' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : status === 'absent' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-slate-50 text-slate-300 border-slate-100';
+                const sText = status === 'coming' ? '참석 예정' : status === 'absent' ? '불참' : '미확인';
+                
+                container.innerHTML += `
+                    <div class="bg-white p-5 rounded-[1.5rem] border border-slate-100 flex items-center justify-between group shadow-sm transition hover:shadow-md">
+                        <div class="flex items-center space-x-3 sm:space-x-4">
+                            <div class="w-10 h-10 sm:w-12 sm:h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center font-bold text-slate-400 text-xs">${m.name[0]}</div>
+                            <div>
+                                <h4 class="text-xs font-black text-slate-800">${m.name}</h4>
+                                <p class="text-[9px] font-bold text-indigo-500 uppercase tracking-tighter">${m.session || '세션 미지정'}</p>
+                            </div>
+                        </div>
+                        <div class="text-right flex flex-col items-end">
+                            <span class="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-xl text-[9px] font-black border ${sBg}">${sText}</span>
+                            ${currentUser.role === 'president' ? `<button onclick="deleteMember('${m.id}')" class="mt-2 opacity-0 group-hover:opacity-100 text-[9px] text-slate-300 hover:text-red-500 transition-all font-bold">삭제</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+        };
+
+        const renderNotices = () => {
+            const list = document.getElementById('notice-list');
+            if(!list) return;
+            list.innerHTML = notices.length === 0 ? '<p class="text-[10px] text-slate-300 font-bold px-1">등록된 공지가 없습니다.</p>' : '';
+            notices.sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 3).forEach(n => {
+                const div = document.createElement('div');
+                div.className = "p-4 bg-slate-50 rounded-2xl hover:bg-slate-100 transition cursor-pointer shadow-sm border border-slate-100";
+                div.innerHTML = `<h4 class="text-[11px] font-black truncate text-slate-700">${n.title}</h4><p class="text-[9px] text-slate-400 font-bold line-clamp-1 mt-1">${n.content}</p>`;
+                div.onclick = () => showToast(`[공지] ${n.title}\n\n${n.content}`, true);
+                list.appendChild(div);
+            });
+        };
+
+        const initCalendar = () => {
+            calendar = new FullCalendar.Calendar(document.getElementById('calendar'), {
+                initialView: 'dayGridMonth',
+                locale: 'ko',
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' },
+                dayMaxEvents: 5,
+                height: 'auto',
+                displayEventTime: false,
+                eventClick: (info) => {
+                    const ev = schedules.find(s => s.id === info.event.id);
+                    if (ev) showEventDetail(ev);
+                }
+            });
+            calendar.render();
+        };
+
+        const updateCalendar = () => {
+            if (!calendar) return;
+            calendar.removeAllEvents();
+            const colors = { practice: '#1e293b', meeting: '#64748b', performance: '#4f46e5', absence: '#e11d48', etc: '#0d9488' };
+            const labels = { practice: '합주', meeting: '회의', performance: '공연', absence: '불참', etc: '기타' };
+            
+            schedules.forEach(s => {
+                let eventTitle = `[${labels[s.type]}] ${s.userName}`;
+                if (s.type !== 'absence' && s.title) eventTitle += `: ${s.title}`;
+                else if (s.type === 'absence') eventTitle += ` (${s.title})`;
+
+                calendar.addEvent({
+                    id: s.id, 
+                    title: eventTitle, 
+                    start: s.date,
+                    backgroundColor: colors[s.type] || '#1e293b', 
+                    borderColor: 'transparent',
+                    allDay: true
+                });
+            });
+        };
+
+        window.showEventDetail = (ev) => {
+            const labels = { practice: '합주 연습', meeting: '정기 회의', performance: '공연 일정', absence: '미참석 알림', etc: '기타 일정' };
+            const bgs = { practice: 'bg-slate-900 text-white', meeting: 'bg-slate-200 text-slate-700', performance: 'bg-indigo-600 text-white', absence: 'bg-rose-600 text-white', etc: 'bg-teal-600 text-white' };
+            
+            const badge = document.getElementById('event-detail-badge');
+            const title = document.getElementById('event-detail-title');
+            const user = document.getElementById('event-detail-user');
+            const date = document.getElementById('event-detail-date');
+            const desc = document.getElementById('event-detail-desc');
+            const modal = document.getElementById('event-detail-modal');
+
+            if(badge) {
+                badge.className = `inline-block px-3 py-1.5 rounded-xl text-[10px] font-black uppercase mb-5 ${bgs[ev.type]}`;
+                badge.innerText = labels[ev.type];
+            }
+            if(title) title.innerText = ev.title || labels[ev.type];
+            if(user) user.innerText = ev.userName;
+            if(date) date.innerText = ev.date;
+            if(desc) desc.innerText = ev.title || "상세 내용 없음";
+            
+            const delBtn = document.getElementById('btn-delete-event');
+            if(delBtn) {
+                const canDelete = currentUser.role !== 'member' || ev.userName === currentUser.name;
+                if (canDelete) {
+                    delBtn.classList.remove('hidden');
+                    delBtn.onclick = async () => { 
+                        if(confirm("이 일정을 삭제하시겠습니까?")) { 
+                            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'schedules', ev.id)); 
+                            closeModals(); 
+                        } 
+                    };
+                } else {
+                    delBtn.classList.add('hidden');
+                }
+            }
+            
+            if(modal) modal.classList.remove('hidden');
+        };
+
+        window.saveSchedule = async () => {
+            const titleInput = document.getElementById('schedule-title');
+            const errorMsg = document.getElementById('validation-error');
+            const title = titleInput.value.trim();
+            const date = document.getElementById('schedule-date').value;
+
+            if (!title) {
+                errorMsg.classList.remove('hidden');
+                titleInput.focus();
+                return;
+            } else {
+                errorMsg.classList.add('hidden');
+            }
+
+            if (!date) return showToast("날짜를 선택해 주세요.");
+
+            if (currentUser.role === 'member' && selectedType !== 'absence') return showToast("부원은 미참석 알림만 등록할 수 있습니다.");
+
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'schedules'), { 
+                title, date, type: selectedType, userName: currentUser.name, createdAt: new Date().toISOString() 
+            });
+            titleInput.value = '';
+        };
+
+        window.saveNotice = async () => {
+            const title = document.getElementById('notice-title').value.trim();
+            const content = document.getElementById('notice-content').value.trim();
+            if (!title || !content) return showToast("공지 제목과 내용을 입력하세요.");
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'notices'), { title, content, createdAt: new Date().toISOString() });
+            closeModals();
+        };
+
+        // Custom Toast / Message Box (alert 대신 사용 권장)
+        window.showToast = (msg, isLong = false) => {
+            // 편의상 브라우저 기본 컨펌이나 팝업은 사용하지만, iFrame 제약이 있을 수 있어 커스텀 구현도 좋습니다.
+            // 여기서는 요청하신 '메세지 표시'를 위해 간단히 알림을 유지하거나 상세 모달을 활용합니다.
+            alert(msg);
+        };
+
+        window.openNoticeModal = () => document.getElementById('notice-modal').classList.remove('hidden');
+        window.openMemberModal = () => document.getElementById('member-modal').classList.remove('hidden');
+        window.closeModals = () => document.querySelectorAll('[id$="-modal"]').forEach(m => m.classList.add('hidden'));
+        
+        window.addMember = async () => {
+            const name = document.getElementById('new-member-name').value.trim();
+            const role = document.getElementById('new-member-role').value;
+            if (!name) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'members'), { name, role, session: '미정', lastUpdate: '', todayStatus: 'none' });
+            closeModals();
+            document.getElementById('new-member-name').value = '';
+        };
+        
+        window.deleteMember = async (id) => { 
+            if(confirm("부원을 삭제하시겠습니까?")) 
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'members', id)); 
+        };
+    </script>
+</body>
+</html>
